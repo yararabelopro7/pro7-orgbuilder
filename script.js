@@ -1,326 +1,243 @@
-// Estado global da aplicação carregado do localStorage
-let appData = JSON.parse(localStorage.getItem('pro7_orgbuilder_data')) || {
-    companies: [
-        { id: 'comp_1', name: 'Grupo Alfa Corporativo', segment: 'Indústria & Logística' }
-    ],
-    collaborators: [
-        { id: 'col_1', companyId: 'comp_1', name: 'Carlos Eduardo', role: 'Diretor Presidente (CEO)', department: 'Diretoria Executiva', managerId: '', email: 'carlos@alfa.com' },
-        { id: 'col_2', companyId: 'comp_1', name: 'Juliana Mendes', role: 'Gerente de DHO', department: 'Recursos Humanos', managerId: 'col_1', email: 'juliana@alfa.com' },
-        { id: 'col_3', companyId: 'comp_1', name: 'Marcos Vinícius', role: 'Gerente Comercial', department: 'Comercial', managerId: 'col_1', email: 'marcos@alfa.com' }
-    ]
-};
 
-function saveData() {
-    localStorage.setItem('pro7_orgbuilder_data', JSON.stringify(appData));
-    updateDashboardMetrics();
-    populateCompanySelectors();
-}
+(() => {
+  "use strict";
+  const KEY = "pro7_orgbuilder_v1", SES = "pro7_orgbuilder_session";
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const SC = { asis: "AS IS (atual)", tobe: "TO BE (planejada)" };
 
-// Inicialização
-document.addEventListener('DOMContentLoaded', () => {
-    updateDashboardMetrics();
-    populateCompanySelectors();
-    renderCompaniesTable();
-});
+  /* ---------- Estado e persistência ---------- */
+  function seed() {
+    const c = uid(), mk = (name, role, dept, parentId) => ({ id: uid(), companyId: c, scenario: "asis", name, role, dept, email: "", parentId });
+    const dir = mk("Ana Souza", "Diretora Geral", "Diretoria", null);
+    const op = mk("Carlos Lima", "Gerente de Operações", "Operações", dir.id);
+    const rh = mk("Marta Reis", "Gerente de RH", "DHO", dir.id);
+    const sup = mk("João Alves", "Supervisor de Produção", "Operações", op.id);
+    return { companies: [{ id: c, name: "Empresa Demo", segment: "Indústria" }], employees: [dir, op, rh, sup], cid: c, scenario: "asis", view: "dashboard" };
+  }
+  function load() {
+    try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && Array.isArray(d.companies) && Array.isArray(d.employees)) return d; } catch (e) { /* ignora */ }
+    return seed();
+  }
+  let S = load(), editing = null;
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Não foi possível salvar no navegador."); } };
 
-// Navegação por Abas
-function switchTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+  const company = () => S.companies.find(c => c.id === S.cid);
+  const emps = (cid = S.cid, sc = S.scenario) => S.employees.filter(e => e.companyId === cid && e.scenario === sc);
+  const byId = id => S.employees.find(e => e.id === id);
 
-    document.getElementById(`tab-${tabId}`).classList.add('active');
-    event.currentTarget.classList.add('active');
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2800);
+  }
+  function hue(str) { let h = 0; for (const ch of str.toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; }
 
-    if (tabId === 'organogram') {
-        loadOrganogramData();
-    } else if (tabId === 'companies') {
-        renderCompaniesTable();
-    }
-}
-
-// Atualizar Métricas do Painel
-function updateDashboardMetrics() {
-    document.getElementById('stat-companies').innerText = appData.companies.length;
-    document.getElementById('stat-collaborators').innerText = appData.collaborators.length;
-    
-    const depts = new Set(appData.collaborators.map(c => c.department));
-    document.getElementById('stat-departments').innerText = depts.size;
-}
-
-// Preencher Seletor de Empresas
-function populateCompanySelectors() {
-    const selector = document.getElementById('company-selector');
-    const currentVal = selector.value;
-    selector.innerHTML = '<option value="">Selecione uma empresa...</option>';
-    
-    appData.companies.forEach(comp => {
-        const opt = document.createElement('option');
-        opt.value = comp.id;
-        opt.textContent = `${comp.name} (${comp.segment})`;
-        selector.appendChild(opt);
-    });
-
-    if (currentVal) selector.value = currentVal;
-}
-
-// Gestão de Empresas
-function openCompanyModal() {
-    document.getElementById('company-form').reset();
-    document.getElementById('company-modal').style.display = 'flex';
-}
-
-function closeCompanyModal() {
-    document.getElementById('company-modal').style.display = 'none';
-}
-
-function saveCompany(e) {
-    e.preventDefault();
-    const name = document.getElementById('company-name').value;
-    const segment = document.getElementById('company-segment').value;
-
-    const newCompany = {
-        id: 'comp_' + Date.now(),
-        name,
-        segment
+  /* ---------- Hierarquia ---------- */
+  // true se "candidate" está abaixo de "id" (evita ciclos)
+  function isDescendant(id, candidate) {
+    let cur = candidate, guard = 0;
+    while (cur && guard++ < 1000) { if (cur === id) return true; cur = byId(cur)?.parentId; }
+    return false;
+  }
+  function depth(list) {
+    const map = new Map(list.map(e => [e.id, e]));
+    let max = 0;
+    list.forEach(e => { let d = 1, cur = e, g = 0; while (cur.parentId && map.has(cur.parentId) && g++ < 1000) { cur = map.get(cur.parentId); d++; } max = Math.max(max, d); });
+    return max;
+  }
+  function treeHtml(list) {
+    if (!list.length) return '<p class="empty">Nenhum colaborador neste cenário. Cadastre o primeiro no formulário abaixo.</p>';
+    const ids = new Set(list.map(e => e.id)), kids = {}, roots = [];
+    list.forEach(e => { if (e.parentId && ids.has(e.parentId)) (kids[e.parentId] ||= []).push(e); else roots.push(e); });
+    const seen = new Set();
+    const node = e => {
+      if (seen.has(e.id)) return "";
+      seen.add(e.id);
+      const h = hue(e.dept), ch = (kids[e.id] || []).map(node).join("");
+      return `<li><div class="node" tabindex="0" role="button" data-edit="${e.id}" style="--dept:hsl(${h} 65% 48%);--dept-text:hsl(${h} 55% 32%)" title="Clique para editar">
+        <strong>${esc(e.name)}</strong><span>${esc(e.role)}</span><em>${esc(e.dept)}</em></div>${ch ? `<ul>${ch}</ul>` : ""}</li>`;
     };
+    return `<ul>${roots.map(node).join("")}</ul>`;
+  }
 
-    appData.companies.push(newCompany);
-    saveData();
-    closeCompanyModal();
-    renderCompaniesTable();
-}
+  /* ---------- Renderização ---------- */
+  function render() {
+    $$(".nav [data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === S.view));
+    $$(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + S.view));
+    renderDashboard(); renderCompanies(); renderOrg();
+  }
 
-function deleteCompany(companyId) {
-    if (confirm('Tem certeza que deseja excluir esta empresa e todos os seus colaboradores vinculados?')) {
-        appData.companies = appData.companies.filter(c => c.id !== companyId);
-        appData.collaborators = appData.collaborators.filter(c => c.companyId !== companyId);
-        saveData();
-        renderCompaniesTable();
-        document.getElementById('company-selector').value = '';
-        loadOrganogramData();
-    }
-}
+  function renderDashboard() {
+    const sectors = new Set(S.employees.map(e => e.companyId + "|" + e.dept.toLowerCase()));
+    const cur = company();
+    $("#stats").innerHTML = [
+      [S.companies.length, "Empresas"], [S.employees.length, "Colaboradores (todos os cenários)"],
+      [sectors.size, "Setores"], [cur ? depth(emps(cur.id, "asis")) : 0, "Níveis hierárquicos (AS IS)"]
+    ].map(([n, l]) => `<div class="stat"><b>${n}</b><span>${l}</span></div>`).join("");
+    $("#cmpCompany").textContent = cur ? `Empresa selecionada: ${cur.name}` : "Cadastre uma empresa para ver o comparativo.";
+    if (!cur) { $("#cmpTable").innerHTML = ""; return; }
+    const m = sc => {
+      const l = emps(cur.id, sc), mg = new Set(l.map(e => e.parentId).filter(Boolean));
+      return { n: l.length, s: new Set(l.map(e => e.dept.toLowerCase())).size, d: depth(l), g: mg.size, span: mg.size ? (l.filter(e => e.parentId).length / mg.size).toFixed(1) : "0" };
+    };
+    const a = m("asis"), t = m("tobe");
+    const rows = [["Colaboradores", "n"], ["Setores", "s"], ["Níveis hierárquicos", "d"], ["Gestores", "g"], ["Média de subordinados por gestor", "span"]];
+    $("#cmpTable").innerHTML = `<thead><tr><th>Indicador</th><th>AS IS</th><th>TO BE</th></tr></thead><tbody>${rows.map(([l, k]) => `<tr><td>${l}</td><td>${a[k]}</td><td>${t[k]}</td></tr>`).join("")}</tbody>`;
+  }
 
-function renderCompaniesTable() {
-    const tbody = document.querySelector('#companies-table tbody');
-    tbody.innerHTML = '';
+  function renderCompanies() {
+    $("#coTable").innerHTML = S.companies.length
+      ? `<thead><tr><th>Empresa</th><th>Segmento</th><th>Colaboradores</th><th>Setores</th><th></th></tr></thead><tbody>${S.companies.map(c => {
+        const all = S.employees.filter(e => e.companyId === c.id);
+        const secs = [...new Set(all.map(e => e.dept))].sort();
+        return `<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.segment)}</td><td>${all.length}</td>
+          <td>${secs.map(s => `<span class="chip">${esc(s)}</span>`).join("") || "—"}</td>
+          <td class="r"><button class="btn sm" data-open="${c.id}">Abrir organograma</button> <button class="btn sm danger" data-delco="${c.id}">Excluir</button></td></tr>`;
+      }).join("")}</tbody>`
+      : '<tbody><tr><td class="empty">Nenhuma empresa cadastrada. Use o formulário ao lado.</td></tr></tbody>';
+  }
 
-    if (appData.companies.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Nenhuma empresa cadastrada.</td></tr>`;
-        return;
-    }
+  function renderOrg() {
+    const sel = $("#companySel");
+    sel.innerHTML = S.companies.map(c => `<option value="${c.id}" ${c.id === S.cid ? "selected" : ""}>${esc(c.name)}</option>`).join("") || "<option value=''>Sem empresas</option>";
+    $$("[data-sc]").forEach(b => b.classList.toggle("active", b.dataset.sc === S.scenario));
+    const list = emps();
+    $("#tree").innerHTML = S.cid ? treeHtml(list) : '<p class="empty">Cadastre uma empresa em Empresas / Setores.</p>';
+    $("#deptList").innerHTML = [...new Set(S.employees.filter(e => e.companyId === S.cid).map(e => e.dept))].map(d => `<option value="${esc(d)}">`).join("");
+    fillManagers(list);
+    $("#empTable").innerHTML = list.length
+      ? `<thead><tr><th>Nome</th><th>Cargo</th><th>Setor</th><th>Responde a</th><th></th></tr></thead><tbody>${list.map(e => `<tr>
+        <td><b>${esc(e.name)}</b><br><span class="muted" style="margin:0">${esc(e.email)}</span></td><td>${esc(e.role)}</td><td>${esc(e.dept)}</td>
+        <td>${esc(byId(e.parentId)?.name || "—")}</td>
+        <td class="r"><button class="btn sm" data-edit="${e.id}">Editar</button> <button class="btn sm danger" data-delemp="${e.id}">Excluir</button></td></tr>`).join("")}</tbody>`
+      : '<tbody><tr><td class="empty">Sem colaboradores neste cenário.</td></tr></tbody>';
+  }
 
-    appData.companies.forEach(comp => {
-        const count = appData.collaborators.filter(c => c.companyId === comp.id).length;
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><strong>${comp.name}</strong></td>
-            <td>${comp.segment}</td>
-            <td>${count} colaboradores</td>
-            <td>
-                <button class="logout-btn" style="background:#fee2e2; color:var(--danger);" onclick="deleteCompany('${comp.id}')">Excluir</button>
-            </td>
-        `;
-        tbody.appendChild(tr);
-    });
-}
+  function fillManagers(list, keep) {
+    const f = $("#empForm").elements.gestor, val = keep ?? f.value;
+    f.innerHTML = '<option value="">Nenhum (topo da estrutura)</option>' +
+      list.filter(e => e.id !== editing).map(e => `<option value="${e.id}">${esc(e.name)} — ${esc(e.role)}</option>`).join("");
+    f.value = list.some(e => e.id === val && e.id !== editing) ? val : "";
+  }
 
-// Gestão de Colaboradores e Organograma
-function loadOrganogramData() {
-    const compId = document.getElementById('company-selector').value;
-    const container = document.getElementById('tree-root-container');
-    const emptyState = document.getElementById('canvas-empty');
+  /* ---------- Formulário de colaborador ---------- */
+  function resetForm() {
+    editing = null; $("#empForm").reset();
+    $("#empFormTitle").textContent = "Novo colaborador";
+    $("#empSubmit").textContent = "Adicionar colaborador";
+    $("#empCancel").hidden = true; $("#empErr").hidden = true;
+    fillManagers(emps(), "");
+  }
+  function startEdit(id) {
+    const e = byId(id); if (!e) return;
+    S.view = "org"; editing = id; render();
+    const f = $("#empForm").elements;
+    f.nome.value = e.name; f.cargo.value = e.role; f.setor.value = e.dept; f.email.value = e.email || "";
+    fillManagers(emps(), e.parentId || "");
+    $("#empFormTitle").textContent = "Editar colaborador";
+    $("#empSubmit").textContent = "Salvar alterações";
+    $("#empCancel").hidden = false;
+    $("#empForm").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  function formError(msg) { const p = $("#empErr"); p.textContent = msg; p.hidden = false; }
 
-    container.innerHTML = '';
-
-    if (!compId) {
-        emptyState.style.display = 'block';
-        return;
-    }
-
-    const collabs = appData.collaborators.filter(c => c.companyId === compId);
-    if (collabs.length === 0) {
-        emptyState.style.display = 'block';
-        emptyState.querySelector('p').textContent = 'Esta empresa ainda não possui colaboradores cadastrados. Clique em "Adicionar Colaborador".';
-        return;
-    }
-
-    emptyState.style.display = 'none';
-    buildTreeStructure(collabs, container);
-}
-
-// Construtor de Árvore Hierárquica em HTML (Fluxograma)
-function buildTreeStructure(collabs, container) {
-    // Identificar nós raiz (sem gestor ou gestor não existente na lista)
-    const roots = collabs.filter(c => !c.managerId || !collabs.some(m => m.id === c.managerId));
-
-    if (roots.length === 0) {
-        container.innerHTML = '<p style="color:var(--danger)">Erro de estrutura: Ciclo hierárquico detectado ou nenhum topo definido.</p>';
-        return;
-    }
-
-    const wrapperDiv = document.createElement('div');
-    wrapperDiv.className = 'tree';
-    const ul = document.createElement('ul');
-
-    roots.forEach(root => {
-        ul.appendChild(createNodeElement(root, collabs));
-    });
-
-    wrapperDiv.appendChild(ul);
-    container.appendChild(wrapperDiv);
-}
-
-function createNodeElement(node, allCollabs) {
-    const li = document.createElement('li');
-
-    // Cartão visual
-    const card = document.createElement('div');
-    card.className = 'org-card';
-    card.innerHTML = `
-        <div class="card-header" title="${node.name}">${node.name}</div>
-        <div class="card-role">${node.role}</div>
-        <div class="card-dept">${node.department}</div>
-        <div class="card-actions">
-            <button onclick="editMember('${node.id}')" title="Editar"><i class="fa-solid fa-pen"></i></button>
-            <button class="delete-btn" onclick="deleteMember('${node.id}')" title="Excluir"><i class="fa-solid fa-trash"></i></button>
-        </div>
-    `;
-    li.appendChild(card);
-
-    // Subordinados diretos
-    const subordinates = allCollabs.filter(c => c.managerId === node.id);
-    if (subordinates.length > 0) {
-        const subUl = document.createElement('ul');
-        subordinates.forEach(sub => {
-            subUl.appendChild(createNodeElement(sub, allCollabs));
-        });
-        li.appendChild(subUl);
-    }
-
-    return li;
-}
-
-// Modais de Colaborador
-function openMemberModal(memberId = null) {
-    const compId = document.getElementById('company-selector').value;
-    if (!compId) {
-        alert('Selecione uma empresa antes de adicionar colaboradores.');
-        return;
-    }
-
-    document.getElementById('member-form').reset();
-    document.getElementById('member-id').value = '';
-
-    // Preencher select de gestores
-    const managerSelect = document.getElementById('member-manager');
-    managerSelect.innerHTML = '<option value="">Nenhum (Topo / Diretor Geral)</option>';
-    
-    appData.collaborators
-        .filter(c => c.companyId === compId && c.id !== memberId)
-        .forEach(c => {
-            const opt = document.createElement('option');
-            opt.value = c.id;
-            opt.textContent = `${c.name} - ${c.role}`;
-            managerSelect.appendChild(opt);
-        });
-
-    if (memberId) {
-        const member = appData.collaborators.find(c => c.id === memberId);
-        if (member) {
-            document.getElementById('member-id').value = member.id;
-            document.getElementById('member-name').value = member.name;
-            document.getElementById('member-role').value = member.role;
-            document.getElementById('member-dept').value = member.department;
-            document.getElementById('member-manager').value = member.managerId || '';
-            document.getElementById('member-email').value = member.email || '';
-        }
-    }
-
-    document.getElementById('member-modal').style.display = 'flex';
-}
-
-function closeMemberModal() {
-    document.getElementById('member-modal').style.display = 'none';
-}
-
-function saveMember(e) {
-    e.preventDefault();
-    const compId = document.getElementById('company-selector').value;
-    const id = document.getElementById('member-id').value;
-    const name = document.getElementById('member-name').value;
-    const role = document.getElementById('member-role').value;
-    const department = document.getElementById('member-dept').value;
-    const managerId = document.getElementById('member-manager').value;
-    const email = document.getElementById('member-email').value;
-
-    // Validação anti-loop simples
-    if (id && managerId === id) {
-        alert('Um colaborador não pode ser gestor de si mesmo.');
-        return;
-    }
-
-    if (id) {
-        // Edição
-        const member = appData.collaborators.find(c => c.id === id);
-        if (member) {
-            member.name = name;
-            member.role = role;
-            member.department = department;
-            member.managerId = managerId;
-            member.email = email;
-        }
+  $("#empForm").addEventListener("submit", ev => {
+    ev.preventDefault();
+    if (!S.cid) return formError("Cadastre uma empresa antes de adicionar colaboradores.");
+    const f = ev.target.elements;
+    const v = { name: f.nome.value.trim(), role: f.cargo.value.trim(), dept: f.setor.value.trim(), email: f.email.value.trim(), parentId: f.gestor.value || null };
+    if (!v.name || !v.role || !v.dept) return formError("Preencha nome, cargo e setor.");
+    if (!f.email.checkValidity()) return formError("Informe um e-mail válido ou deixe o campo vazio.");
+    if (editing) {
+      if (v.parentId === editing) return formError("Um colaborador não pode ser gestor de si mesmo.");
+      if (isDescendant(editing, v.parentId)) return formError("Essa escolha cria um ciclo: o gestor selecionado já responde a este colaborador.");
+      Object.assign(byId(editing), v); toast("Alterações salvas.");
     } else {
-        // Criação
-        const newMember = {
-            id: 'col_' + Date.now(),
-            companyId: compId,
-            name,
-            role,
-            department,
-            managerId,
-            email
-        };
-        appData.collaborators.push(newMember);
+      S.employees.push({ id: uid(), companyId: S.cid, scenario: S.scenario, ...v }); toast("Colaborador adicionado.");
     }
+    save(); resetForm(); render();
+  });
+  $("#empCancel").onclick = () => { resetForm(); };
 
-    saveData();
-    closeMemberModal();
-    loadOrganogramData();
-}
-
-function editMember(id) {
-    openMemberModal(id);
-}
-
-function deleteMember(id) {
-    if (confirm('Deseja excluir este colaborador? Os subordinados diretos passarão a ser órfãos e precisarão ser realocados.')) {
-        appData.collaborators = appData.collaborators.filter(c => c.id !== id);
-        // Realocar subordinados para raiz ou sem gestor
-        appData.collaborators.forEach(c => {
-            if (c.managerId === id) c.managerId = '';
-        });
-        saveData();
-        loadOrganogramData();
+  /* ---------- Ações delegadas ---------- */
+  document.addEventListener("click", ev => {
+    const t = ev.target.closest("[data-edit],[data-delemp],[data-delco],[data-open],[data-view],[data-sc]");
+    if (!t) return;
+    const d = t.dataset;
+    if (d.view) { S.view = d.view; save(); render(); }
+    else if (d.sc) { S.scenario = d.sc; editing = null; save(); resetForm(); render(); }
+    else if (d.edit) startEdit(d.edit);
+    else if (d.open) { S.cid = d.open; S.view = "org"; editing = null; save(); resetForm(); render(); }
+    else if (d.delemp) {
+      const e = byId(d.delemp), subs = S.employees.filter(x => x.parentId === e.id);
+      const msg = subs.length
+        ? `Excluir ${e.name}? Os ${subs.length} subordinado(s) direto(s) passarão a responder a ${byId(e.parentId)?.name || "ninguém (topo da estrutura)"}.`
+        : `Excluir ${e.name}?`;
+      if (!confirm(msg)) return;
+      subs.forEach(x => x.parentId = e.parentId || null);
+      S.employees = S.employees.filter(x => x.id !== e.id);
+      if (editing === e.id) editing = null;
+      save(); resetForm(); render(); toast("Colaborador excluído.");
+    } else if (d.delco) {
+      const c = S.companies.find(x => x.id === d.delco), n = S.employees.filter(x => x.companyId === c.id).length;
+      if (!confirm(`Excluir a empresa "${c.name}" e seus ${n} colaborador(es), em todos os cenários? Esta ação não pode ser desfeita.`)) return;
+      S.companies = S.companies.filter(x => x.id !== c.id);
+      S.employees = S.employees.filter(x => x.companyId !== c.id);
+      if (S.cid === c.id) S.cid = S.companies[0]?.id || null;
+      editing = null; save(); resetForm(); render(); toast("Empresa excluída.");
     }
-}
+  });
+  document.addEventListener("keydown", ev => {
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".node")) { ev.preventDefault(); startEdit(ev.target.dataset.edit); }
+  });
 
-function renderChart() {
-    loadOrganogramData();
-}
+  $("#companySel").onchange = e => { S.cid = e.target.value || null; editing = null; save(); resetForm(); render(); };
 
-function exportData() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appData, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `pro7_orgbuilder_backup_${Date.now()}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-}
+  $("#coForm").addEventListener("submit", ev => {
+    ev.preventDefault();
+    const f = ev.target.elements, name = f.nome.value.trim(), segment = f.segmento.value.trim();
+    if (!name || !segment) return toast("Informe nome e segmento.");
+    if (S.companies.some(c => c.name.toLowerCase() === name.toLowerCase())) return toast("Já existe uma empresa com esse nome.");
+    const c = { id: uid(), name, segment }; S.companies.push(c); S.cid = c.id;
+    ev.target.reset(); save(); resetForm(); render(); toast("Empresa cadastrada.");
+  });
 
-function handleLogout() {
-    if (confirm('Deseja realmente encerrar a sessão?')) {
-        alert('Sessão encerrada com sucesso.');
-    }
-}
+  $("#copyScenario").onclick = () => {
+    if (!S.cid) return toast("Selecione uma empresa.");
+    const src = emps(S.cid, "asis");
+    if (!src.length) return toast("O cenário AS IS está vazio.");
+    if (emps(S.cid, "tobe").length && !confirm("O cenário TO BE atual será substituído por uma cópia do AS IS. Continuar?")) return;
+    const map = new Map(src.map(e => [e.id, uid()]));
+    S.employees = S.employees.filter(e => !(e.companyId === S.cid && e.scenario === "tobe"))
+      .concat(src.map(e => ({ ...e, id: map.get(e.id), scenario: "tobe", parentId: e.parentId ? map.get(e.parentId) || null : null })));
+    S.scenario = "tobe"; save(); resetForm(); render(); toast("AS IS copiado para TO BE.");
+  };
+
+  $("#exportJson").onclick = () => {
+    const c = company(); if (!c) return toast("Selecione uma empresa.");
+    const pack = sc => emps(c.id, sc).map(e => ({ id: e.id, nome: e.name, cargo: e.role, setor: e.dept, email: e.email, parent_id: e.parentId }));
+    const data = { sistema: "PRO7 OrgBuilder", exportado_em: new Date().toISOString(), empresa: { nome: c.name, segmento: c.segment }, cenarios: { AS_IS: pack("asis"), TO_BE: pack("tobe") } };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+    a.download = `organograma-${c.name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    toast("JSON exportado.");
+  };
+
+  /* ---------- Login simples (demonstração) ---------- */
+  function gate() {
+    let user = null; try { user = localStorage.getItem(SES); } catch (e) { /* ignora */ }
+    $("#login").hidden = !!user; $("#app").hidden = !user;
+    if (user) { if (!S.view) S.view = "dashboard"; resetForm(); render(); }
+  }
+  $("#loginForm").addEventListener("submit", ev => {
+    ev.preventDefault();
+    try { localStorage.setItem(SES, ev.target.elements.user.value.trim()); } catch (e) { /* ignora */ }
+    gate();
+  });
+  $("#logout").onclick = () => { try { localStorage.removeItem(SES); } catch (e) { /* ignora */ } $("#loginForm").reset(); gate(); };
+
+  gate();
+})();
