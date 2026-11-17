@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRO7 OrgBuilder · Sistema de Organogramas Gratuitos</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- TELA DE AUTENTICAÇÃO / ACESSO -->
+<div id="authScreen" class="auth-wrap">
+  <div class="auth-card">
+    <span class="brand-badge">PRO7 · Consultoria Organizacional (Custo Zero)</span>
+    <h1>Acesso ao Sistema</h1>
+    <p>Ambiente seguro e 100% gratuito rodando no Cloudflare Pages.</p>
+    
+    <div class="tabs-auth">
+      <button id="tabLogin" class="active" onclick="switchAuthTab('login')">Entrar</button>
+      <button id="tabRegister" onclick="switchAuthTab('register')">Cadastrar Usuário</button>
+      <button id="tabBackup" onclick="switchAuthTab('backup')">Gerenciar Backups</button>
+    </div>
+
+    <div id="authMsg"></div>
+
+    <form id="loginForm" onsubmit="handleLogin(event)">
+      <div class="field"><label>E-mail corporativo</label><input type="email" id="loginEmail" required placeholder="seu.nome@pro7.com.br"></div>
+      <div class="field"><label>Senha</label><input type="password" id="loginPass" required placeholder="••••••••"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%">Entrar no Sistema</button>
+    </form>
+
+    <form id="registerForm" style="display:none" onsubmit="handleRegister(event)">
+      <div class="field"><label>Nome completo</label><input type="text" id="regName" required placeholder="Ex.: Ana Carolina"></div>
+      <div class="field"><label>E-mail</label><input type="email" id="regEmail" required placeholder="ana@pro7.com.br"></div>
+      <div class="field"><label>Senha de acesso</label><input type="password" id="regPass" required minlength="4" placeholder="Mínimo 4 caracteres"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%">Criar Conta Gratuita</button>
+    </form>
+
+    <div id="backupForm" style="display:none">
+      <div class="alert alert-info">Proteja seus dados! Faça o backup regular das clínicas em arquivo JSON ou restaure um backup anterior.</div>
+      <button type="button" class="btn btn-primary" style="width:100%;margin-bottom:10px" onclick="exportSystemBackup()">📥 Baixar Backup Geral (JSON)</button>
+      <div class="field"><label>Restaurar Backup de Arquivo</label><input type="file" id="importFile" accept=".json" onchange="importSystemBackup(event)"></div>
+    </div>
+  </div>
+</div>
+
+<!-- APLICAÇÃO PRINCIPAL -->
+<div id="appShell" class="app">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <strong>PRO7 OrgBuilder</strong>
+      <span>Cloudflare Pages Edition</span>
+    </div>
+
+    <div class="nav-group">Menu Principal</div>
+    <button class="nav-item active" onclick="navigate('companies')">🏢 Clínicas & Empresas</button>
+    <button class="nav-item" onclick="navigate('backupmgr')">💾 Backup & Segurança</button>
+
+    <div class="user-box">
+      <b id="curUserName">—</b>
+      <span id="curUserRole">Consultora DHO</span>
+      <button class="btn btn-outline btn-sm" style="width:100%;margin-top:6px" onclick="logout()">Sair</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <strong id="pageTitle">Gestão de Empresas</strong>
+      <div class="context-pill">Clínica Ativa: <strong id="activeCompanyBadge" style="color:var(--primary)">Nenhuma</strong></div>
+    </header>
+
+    <div class="content">
+      <div id="globalAlert"></div>
+
+      <!-- VIEW: EMPRESAS -->
+      <section id="view-companies" class="view active">
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Cadastrar Nova Clínica / Empresa</h2></div>
+          <form onsubmit="createCompany(event)">
+            <div class="grid-3">
+              <div class="field"><label>Nome da Clínica *</label><input id="cName" required placeholder="Ex.: Clínica Sorriso Perfeito"></div>
+              <div class="field"><label>Cidade / UF *</label><input id="cCityState" required placeholder="Curitiba - PR"></div>
+              <div class="field"><label>Responsável DHO *</label><input id="cElab" required placeholder="Nome da psicóloga"></div>
+            </div>
+            <button type="submit" class="btn btn-primary">+ Cadastrar Clínica e Iniciar Organograma</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h2 class="card-title">Clínicas Cadastradas</h2></div>
+          <div id="companiesList"></div>
+        </div>
+      </section>
+
+      <!-- VIEW: WORKSPACE DA CLÍNICA -->
+      <section id="view-workspace" class="view">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title" id="wsCompanyName">Detalhes da Empresa</h2>
+            <button class="btn btn-outline btn-sm" onclick="navigate('companies')">← Voltar às Clínicas</button>
+          </div>
+          <div class="grid-3" id="wsKpis"></div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:10px">Setores / Departamentos</h3>
+            <form onsubmit="createDepartment(event)">
+              <div class="field"><label>Nome do Setor</label><input id="dName" required placeholder="Ex.: Setor Clínico"></div>
+              <button type="submit" class="btn btn-primary btn-sm">+ Adicionar Setor</button>
+            </form>
+            <div id="deptList" style="margin-top:12px"></div>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title" style="margin-bottom:10px">Cargos e Posições (AS IS / TO BE)</h3>
+            <form onsubmit="createPosition(event)">
+              <div class="field"><label>Título do Cargo</label><input id="pTitle" required placeholder="Ex.: Gerente Administrativa"></div>
+              <div class="field"><label>Setor</label><select id="pDeptSelect"></select></div>
+              <div class="field"><label>Cenário</label><select id="pScenario"><option value="AS_IS">AS IS (Atual)</option><option value="TO_BE">TO BE (Planejado)</option></select></div>
+              <button type="submit" class="btn btn-primary btn-sm">+ Adicionar Cargo</button>
+            </form>
+            <div id="posList" style="margin-top:12px"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW: BACKUP & SEGURANÇA -->
+      <section id="view-backupmgr" class="view">
+        <div class="card">
+          <h2 class="card-title">Central de Segurança e Backup Gratuito</h2>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:16px">Como os dados ficam armazenados no seu navegador por segurança e gratuidade total, faça o download periódico do arquivo de backup para evitar perdas caso limpe os dados do navegador.</p>
+          <button class="btn btn-primary" onclick="exportSystemBackup()">📥 Baixar Arquivo de Backup Completo (.json)</button>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
