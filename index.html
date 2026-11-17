@@ -1,185 +1,118 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PRO7 OrgBuilder - Gestão de Organogramas</title>
-    <link rel="stylesheet" href="styles.css">
-    <!-- FontAwesome para ícones profissionais -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRO7 OrgBuilder</title>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Topo / Header Profissional -->
-    <header class="app-header">
-        <div class="logo-area">
-            <h1><i class="fa-solid fa-sitemap"></i> PRO7 OrgBuilder</h1>
-            <span class="badge-dho">DHO & Governança</span>
+
+<div id="login" class="login" hidden>
+  <form id="loginForm" class="card login-card">
+    <h1>PRO7 OrgBuilder</h1>
+    <p class="muted">Gestão de organogramas para consultorias de DHO.</p>
+    <label>Seu nome
+      <input name="user" required maxlength="60" placeholder="Ex.: Maria Silva" autocomplete="name">
+    </label>
+    <button class="btn primary" type="submit">Entrar</button>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="header">
+    <div class="brand">PRO7 <span>OrgBuilder</span></div>
+    <nav class="nav" aria-label="Menu principal">
+      <button type="button" data-view="dashboard">Painel</button>
+      <button type="button" data-view="org">Organograma</button>
+      <button type="button" data-view="companies">Empresas / Setores</button>
+      <button type="button" id="logout" class="logout">Sair</button>
+    </nav>
+  </header>
+
+  <main class="main">
+
+    <!-- PAINEL -->
+    <section id="view-dashboard" class="view">
+      <h2>Painel</h2>
+      <div id="stats" class="stats"></div>
+      <div class="card">
+        <h3>Comparativo AS IS e TO BE</h3>
+        <p class="muted" id="cmpCompany"></p>
+        <div class="table-wrap"><table id="cmpTable"></table></div>
+      </div>
+    </section>
+
+    <!-- ORGANOGRAMA -->
+    <section id="view-org" class="view">
+      <h2>Organograma</h2>
+      <div class="toolbar card">
+        <label>Empresa <select id="companySel"></select></label>
+        <div class="seg" role="group" aria-label="Cenário">
+          <button type="button" data-sc="asis">AS IS (atual)</button>
+          <button type="button" data-sc="tobe">TO BE (planejada)</button>
         </div>
-        <nav class="main-nav">
-            <button class="nav-btn active" onclick="switchTab('dashboard')"><i class="fa-solid fa-chart-pie"></i> Painel</button>
-            <button class="nav-btn" onclick="switchTab('organogram')"><i class="fa-solid fa-network-wired"></i> Organograma</button>
-            <button class="nav-btn" onclick="switchTab('companies')"><i class="fa-solid fa-building"></i> Empresas / Setores</button>
-        </nav>
-        <div class="user-area">
-            <span id="user-display"><i class="fa-solid fa-user-circle"></i> Consultor DHO</span>
-            <button class="logout-btn" onclick="handleLogout()" title="Sair do Sistema"><i class="fa-solid fa-right-from-bracket"></i> Sair</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn" id="copyScenario">Copiar AS IS para TO BE</button>
+        <button type="button" class="btn primary" id="exportJson">Exportar JSON</button>
+      </div>
+
+      <div class="card">
+        <div class="tree-wrap"><div id="tree" class="tree"></div></div>
+      </div>
+
+      <div class="grid2">
+        <form id="empForm" class="card" novalidate>
+          <h3 id="empFormTitle">Novo colaborador</h3>
+          <label>Nome <input name="nome" required maxlength="80"></label>
+          <label>Cargo <input name="cargo" required maxlength="80"></label>
+          <label>Setor / Departamento <input name="setor" required maxlength="60" list="deptList"></label>
+          <datalist id="deptList"></datalist>
+          <label>E-mail <input name="email" type="email" maxlength="120"></label>
+          <label>Gestor imediato (a quem responde)
+            <select name="gestor"></select>
+          </label>
+          <p id="empErr" class="error" role="alert" hidden></p>
+          <div class="actions">
+            <button class="btn primary" type="submit" id="empSubmit">Adicionar colaborador</button>
+            <button class="btn" type="button" id="empCancel" hidden>Cancelar edição</button>
+          </div>
+        </form>
+
+        <div class="card">
+          <h3>Colaboradores do cenário</h3>
+          <div class="table-wrap"><table id="empTable"></table></div>
         </div>
-    </header>
+      </div>
+    </section>
 
-    <!-- Conteúdo Principal -->
-    <main class="app-container">
-        
-        <!-- ABA 1: DASHBOARD -->
-        <section id="tab-dashboard" class="tab-content active">
-            <div class="welcome-banner">
-                <h2>Bem-vindo ao Ambiente de Desenvolvimento Humano e Organizacional</h2>
-                <p>Gerencie estruturas corporativas, mapeie hierarquias (AS IS e TO BE) e analise fluxos de liderança de forma ágil.</p>
-            </div>
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <i class="fa-solid fa-building"></i>
-                    <div>
-                        <h3 id="stat-companies">0</h3>
-                        <p>Empresas Cadastradas</p>
-                    </div>
-                </div>
-                <div class="metric-card">
-                    <i class="fa-solid fa-users"></i>
-                    <div>
-                        <h3 id="stat-collaborators">0</h3>
-                        <p>Colaboradores Mapeados</p>
-                    </div>
-                </div>
-                <div class="metric-card">
-                    <i class="fa-solid fa-layer-group"></i>
-                    <div>
-                        <h3 id="stat-departments">0</h3>
-                        <p>Setores / Departamentos</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ABA 2: ORGANOGRAMA (FLUXOGRAMA INTERATIVO) -->
-        <section id="tab-organogram" class="tab-content">
-            <div class="toolbar">
-                <div class="toolbar-left">
-                    <label for="company-selector">Empresa:</label>
-                    <select id="company-selector" onchange="loadOrganogramData()">
-                        <option value="">Selecione uma empresa...</option>
-                    </select>
-                    
-                    <label for="scenario-selector">Cenário:</label>
-                    <select id="scenario-selector" onchange="renderChart()">
-                        <option value="asis">Estrutura Atual (AS IS)</option>
-                        <option value="tobe">Nova Estrutura Planejada (TO BE)</option>
-                    </select>
-                </div>
-                <div class="toolbar-right">
-                    <button class="btn-primary" onclick="openMemberModal()"><i class="fa-solid fa-user-plus"></i> Adicionar Colaborador</button>
-                    <button class="btn-secondary" onclick="exportData()"><i class="fa-solid fa-download"></i> Exportar Dados</button>
-                </div>
-            </div>
-
-            <div class="canvas-container" id="org-canvas">
-                <div class="empty-state" id="canvas-empty">
-                    <i class="fa-solid fa-folder-open"></i>
-                    <p>Selecione uma empresa acima ou cadastre novos colaboradores para visualizar o organograma em árvore hierárquica.</p>
-                </div>
-                <div class="tree-root" id="tree-root-container"></div>
-            </div>
-        </section>
-
-        <!-- ABA 3: EMPRESAS E SETORES -->
-        <section id="tab-companies" class="tab-content">
-            <div class="section-header">
-                <h2>Gestão de Empresas e Departamentos</h2>
-                <button class="btn-primary" onclick="openCompanyModal()"><i class="fa-solid fa-plus"></i> Nova Empresa</button>
-            </div>
-            <div class="table-responsive">
-                <table class="data-table" id="companies-table">
-                    <thead>
-                        <tr>
-                            <th>Nome da Empresa</th>
-                            <th>Segmento / Setor</th>
-                            <th>Colaboradores</th>
-                            <th>Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <!-- Preenchido via JS -->
-                    </tbody>
-                </table>
-            </div>
-        </section>
-
-    </main>
-
-    <!-- MODAL: CADASTRAR / EDITAR COLABORADOR -->
-    <div id="member-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="closeMemberModal()">&times;</span>
-            <h3>Adicionar Colaborador ao Organograma</h3>
-            <form id="member-form" onsubmit="saveMember(event)">
-                <input type="hidden" id="member-id">
-                
-                <div class="form-group">
-                    <label for="member-name">Nome Completo</label>
-                    <input type="text" id="member-name" required placeholder="Ex: Ana Souza">
-                </div>
-
-                <div class="form-group">
-                    <label for="member-role">Cargo / Título</label>
-                    <input type="text" id="member-role" required placeholder="Ex: Gerente de Operações">
-                </div>
-
-                <div class="form-group">
-                    <label for="member-dept">Setor / Departamento</label>
-                    <input type="text" id="member-dept" required placeholder="Ex: Comercial, RH, TI, Operações">
-                </div>
-
-                <div class="form-group">
-                    <label for="member-manager">Gestor Imediato (A quem responde)</label>
-                    <select id="member-manager">
-                        <option value="">Nenhum (Topo / CEO / Diretor Geral)</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label for="member-email">E-mail</label>
-                    <input type="email" id="member-email" placeholder="email@empresa.com">
-                </div>
-
-                <div class="form-actions">
-                    <button type="button" class="btn-secondary" onclick="closeMemberModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary">Salvar Colaborador</button>
-                </div>
-            </form>
+    <!-- EMPRESAS -->
+    <section id="view-companies" class="view">
+      <h2>Empresas / Setores</h2>
+      <div class="grid2">
+        <form id="coForm" class="card">
+          <h3>Nova empresa</h3>
+          <label>Nome <input name="nome" required maxlength="80"></label>
+          <label>Segmento
+            <input name="segmento" required maxlength="60" list="segList" placeholder="Ex.: Indústria, Varejo, Serviços">
+          </label>
+          <datalist id="segList">
+            <option>Indústria</option><option>Varejo</option><option>Serviços</option>
+            <option>Saúde</option><option>Tecnologia</option><option>Agronegócio</option>
+          </datalist>
+          <div class="actions"><button class="btn primary" type="submit">Cadastrar empresa</button></div>
+        </form>
+        <div class="card">
+          <h3>Empresas cadastradas</h3>
+          <div class="table-wrap"><table id="coTable"></table></div>
         </div>
-    </div>
+      </div>
+    </section>
 
-    <!-- MODAL: CADASTRAR EMPRESA -->
-    <div id="company-modal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="closeCompanyModal()">&times;</span>
-            <h3>Cadastrar Nova Empresa</h3>
-            <form id="company-form" onsubmit="saveCompany(event)">
-                <div class="form-group">
-                    <label for="company-name">Nome da Empresa</label>
-                    <input type="text" id="company-name" required placeholder="Ex: Grupo Alfa Ltda">
-                </div>
-                <div class="form-group">
-                    <label for="company-segment">Segmento de Atuação</label>
-                    <input type="text" id="company-segment" required placeholder="Ex: Indústria, Varejo, Saúde, Tecnologia">
-                </div>
-                <div class="form-actions">
-                    <button type="button" class="btn-secondary" onclick="closeCompanyModal()">Cancelar</button>
-                    <button type="submit" class="btn-primary">Cadastrar Empresa</button>
-                </div>
-            </form>
-        </div>
-    </div>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
 
-    <script src="script.js"></script>
+<script src="script.js"></script>
 </body>
 </html>
